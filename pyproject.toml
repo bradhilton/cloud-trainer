@@ -1,0 +1,21 @@
+[tool.poetry]
+name = "cloud-trainer"
+version = "0.1.0"
+description = ""
+authors = ["Brad Hilton <brad.hilton.nw@gmail.com>"]
+
+[tool.poetry.dependencies]
+python = ">=3.9,<3.11"
+ipykernel = "^6.15.1"
+autokeras = "^1.0.19"
+aiohttp = "^3.8.1"
+nest-asyncio = "^1.5.5"
+tblib = "^1.7.0"
+
+[tool.poetry.dev-dependencies]
+black = "^22.6.0"
+ipykernel = "^6.15.1"
+
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"
