@@ -1,4 +1,4 @@
-from aiohttp import ClientSession, web
+from aiohttp import web
 from aiohttp.typedefs import Handler
 import asyncio
 import autokeras as ak
@@ -11,7 +11,7 @@ import pickle
 import re
 import sys
 from tblib import pickling_support
-from typing import Any, Callable, Coroutine, Literal, Optional, Union
+from typing import Any, Callable, Coroutine, Literal
 
 autokeras_patch.apply()
 nest_asyncio.apply()
@@ -26,9 +26,13 @@ TUNER_ID = Literal["chief", "tuner0", "tuner1", "tuner2"]
 
 
 async def start_server(*, tuner_id: TUNER_ID) -> None:
+    match = re.match(r"chief|tuner(\d+)", tuner_id)
+    assert match, 'tuner_id must be "chief" or "tuner0" or "tuner1" or "tuner2"'
+
     os.environ["KERASTUNER_TUNER_ID"] = tuner_id
     os.environ["KERASTUNER_HOST"] = "localhost"
     os.environ["KERASTUNER_PORT"] = str(_tuner0_port - 2)
+    os.environ["CUDA_VISIBLE_DEVICES"] = match.group(1) or "3"
 
     app = web.Application(client_max_size=1024**3)
     app.add_routes(
@@ -43,8 +47,6 @@ async def start_server(*, tuner_id: TUNER_ID) -> None:
     await runner.setup()
 
     host = "0.0.0.0"
-    match = re.match(r"chief|tuner(\d+)", tuner_id)
-    assert match, 'tuner_id must be "chief" or "tuner0" or "tuner1" or "tuner2"'
     port = _tuner0_port + int(match.group(1) or "-1")
 
     site = web.TCPSite(
@@ -155,6 +157,7 @@ async def fit_tuner(
     await _client.post(
         f"http://0.0.0.0:{_tuner0_port + tuner_id}/models/{project_name}/fit?quiet",
         content=pickle.dumps(fit_args_and_kwargs),
+        timeout=None,
     )
 
 
