@@ -5,13 +5,13 @@ import autokeras as ak
 import autokeras_patch
 from hooks import Hook
 import httpx
+from multiprocessing import Process
 import nest_asyncio
 import os
 import pickle
-import re
 import sys
 from tblib import pickling_support
-from typing import Any, Callable, Coroutine, Literal
+from typing import Any, Callable, Coroutine
 
 autokeras_patch.apply()
 nest_asyncio.apply()
@@ -19,20 +19,15 @@ pickling_support.install()
 
 models: dict[str, ak.AutoModel] = {}
 _init_args_and_kwargs: dict[str, tuple[list[Any], dict[str, Any]]] = {}
-_tuner0_port = 9652
-_child_task_cancellers: list[Callable[[], Coroutine[Any, Any, None]]] = []
-
-TUNER_ID = Literal["chief", "tuner0", "tuner1", "tuner2"]
+_tuner0_port = 9651
+_child_tasks: list[asyncio.Task] = []
 
 
-async def start_server(*, tuner_id: TUNER_ID) -> None:
-    match = re.match(r"chief|tuner(\d+)", tuner_id)
-    assert match, 'tuner_id must be "chief" or "tuner0" or "tuner1" or "tuner2"'
-
-    os.environ["KERASTUNER_TUNER_ID"] = tuner_id
-    os.environ["KERASTUNER_HOST"] = "localhost"
-    os.environ["KERASTUNER_PORT"] = str(_tuner0_port - 2)
-    os.environ["CUDA_VISIBLE_DEVICES"] = str(int(match.group(1) or -1) + 1)
+async def start_server(*, tuner_id: int) -> None:
+    os.environ["KERASTUNER_TUNER_ID"] = f"tuner{tuner_id}"
+    os.environ["KERASTUNER_ORACLE_IP"] = "localhost"
+    os.environ["KERASTUNER_ORACLE_PORT"] = str(_tuner0_port - 1)
+    os.environ["CUDA_VISIBLE_DEVICES"] = str(tuner_id)
 
     app = web.Application(client_max_size=1024**3)
     app.add_routes(
@@ -47,7 +42,7 @@ async def start_server(*, tuner_id: TUNER_ID) -> None:
     await runner.setup()
 
     host = "0.0.0.0"
-    port = _tuner0_port + int(match.group(1) or "-1")
+    port = _tuner0_port + tuner_id
 
     site = web.TCPSite(
         runner,
@@ -96,8 +91,8 @@ def stream(handler: Callable[[web.Request], Coroutine[Any, Any, Any]]) -> Handle
 
         if isinstance(result, (asyncio.CancelledError, ConnectionResetError)):
             print("Request Cancelled ❌", file=sys.stderr)
-            global _child_task_cancellers
-            await asyncio.gather(*(canceller() for canceller in _child_task_cancellers))
+            for task in _child_tasks:
+                task.cancel()
             return response
 
         await response.write(b"result" + delimiter + pickle.dumps(result))
@@ -131,20 +126,37 @@ async def perform_model_method(request: web.Request) -> Any:
 
     if (
         request.match_info["method"] == "fit"
-        and os.environ["KERASTUNER_TUNER_ID"] == "chief"
+        and os.environ["KERASTUNER_TUNER_ID"] == "tuner0"
     ):
-        global _child_task_cancellers
-        _child_task_cancellers = list(
-            await asyncio.gather(
-                *(
-                    fit_tuner(project_name, tuner_id, (args, kwargs))
-                    for tuner_id in range(3)
-                )
-            )
-        )
-    elif request.match_info["method"] == "fit":
-        print("Starting fit")
+        start_chief_process(project_name)
+
+        global _child_tasks
+        _child_tasks = [
+            await fit_tuner(project_name, tuner_id, (args, kwargs))
+            for tuner_id in range(1, 4)
+        ]
+
     return getattr(model, request.match_info["method"])(*args, **kwargs)
+
+
+_chief_process = Process()
+
+
+def chief_process_target(*args: Any, **kwargs: Any) -> None:
+    print("Started chief process")
+    os.environ["KERASTUNER_TUNER_ID"] = "chief"
+    ak.AutoModel(*args, **kwargs)
+
+
+def start_chief_process(project_name: str) -> None:
+    global _chief_process
+    if _chief_process.is_alive():
+        _chief_process.kill()
+
+    args, kwargs = _init_args_and_kwargs[project_name]
+
+    _chief_process = Process(target=chief_process_target, args=args, kwargs=kwargs)
+    _chief_process.start()
 
 
 _client = httpx.AsyncClient()
@@ -158,7 +170,7 @@ async def fit_tuner(
     project_name: str,
     tuner_id: int,
     fit_args_and_kwargs: tuple[list[Any], dict[str, Any]],
-) -> Callable[[], Coroutine[Any, Any, None]]:
+) -> asyncio.Task:
     try:
         await _client.put(
             f"http://0.0.0.0:{_tuner0_port + tuner_id}/models?quiet",
@@ -173,9 +185,10 @@ async def fit_tuner(
             ),
             stream=True,
         )
-        return response.aclose
-    except BaseException as exception:
-        return lambda: noop()
+        return asyncio.create_task(response.aread())
+    except:
+        print(f"Unable to reach tuner{tuner_id}", file=sys.stderr)
+        return asyncio.create_task(noop())
 
 
 @stream
