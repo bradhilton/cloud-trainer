@@ -19,8 +19,8 @@ pickling_support.install()
 
 models: dict[str, ak.AutoModel] = {}
 _init_args_and_kwargs: dict[str, tuple[list[Any], dict[str, Any]]] = {}
-_tuner0_port = 9101
-_child_tasks: list[asyncio.Task] = []
+_tuner0_port = 9652
+_child_task_cancellers: list[Callable[[], Coroutine[Any, Any, None]]] = []
 
 TUNER_ID = Literal["chief", "tuner0", "tuner1", "tuner2"]
 
@@ -32,7 +32,7 @@ async def start_server(*, tuner_id: TUNER_ID) -> None:
     os.environ["KERASTUNER_TUNER_ID"] = tuner_id
     os.environ["KERASTUNER_HOST"] = "localhost"
     os.environ["KERASTUNER_PORT"] = str(_tuner0_port - 2)
-    os.environ["CUDA_VISIBLE_DEVICES"] = match.group(1) or "3"
+    os.environ["CUDA_VISIBLE_DEVICES"] = str(int(match.group(1) or -1) + 1)
 
     app = web.Application(client_max_size=1024**3)
     app.add_routes(
@@ -96,9 +96,8 @@ def stream(handler: Callable[[web.Request], Coroutine[Any, Any, Any]]) -> Handle
 
         if isinstance(result, (asyncio.CancelledError, ConnectionResetError)):
             print("Request Cancelled ❌", file=sys.stderr)
-            global _child_tasks
-            for task in _child_tasks:
-                task.cancel()
+            global _child_task_cancellers
+            await asyncio.gather(*(canceller() for canceller in _child_task_cancellers))
             return response
 
         await response.write(b"result" + delimiter + pickle.dumps(result))
@@ -134,31 +133,49 @@ async def perform_model_method(request: web.Request) -> Any:
         request.match_info["method"] == "fit"
         and os.environ["KERASTUNER_TUNER_ID"] == "chief"
     ):
-        global _child_tasks
-        _child_tasks = [
-            asyncio.create_task(fit_tuner(project_name, tuner_id, (args, kwargs)))
-            for tuner_id in range(3)
-        ]
+        global _child_task_cancellers
+        _child_task_cancellers = list(
+            await asyncio.gather(
+                *(
+                    fit_tuner(project_name, tuner_id, (args, kwargs))
+                    for tuner_id in range(3)
+                )
+            )
+        )
+    elif request.match_info["method"] == "fit":
+        print("Starting fit")
     return getattr(model, request.match_info["method"])(*args, **kwargs)
 
 
 _client = httpx.AsyncClient()
 
 
+async def noop() -> None:
+    pass
+
+
 async def fit_tuner(
     project_name: str,
     tuner_id: int,
     fit_args_and_kwargs: tuple[list[Any], dict[str, Any]],
-) -> None:
-    await _client.put(
-        f"http://0.0.0.0:{_tuner0_port + tuner_id}/models?quiet",
-        content=pickle.dumps(_init_args_and_kwargs[project_name]),
-    )
-    await _client.post(
-        f"http://0.0.0.0:{_tuner0_port + tuner_id}/models/{project_name}/fit?quiet",
-        content=pickle.dumps(fit_args_and_kwargs),
-        timeout=None,
-    )
+) -> Callable[[], Coroutine[Any, Any, None]]:
+    try:
+        await _client.put(
+            f"http://0.0.0.0:{_tuner0_port + tuner_id}/models?quiet",
+            content=pickle.dumps(_init_args_and_kwargs[project_name]),
+        )
+        response = await _client.send(
+            _client.build_request(
+                "POST",
+                f"http://0.0.0.0:{_tuner0_port + tuner_id}/models/{project_name}/fit?quiet",
+                content=pickle.dumps(fit_args_and_kwargs),
+                timeout=None,
+            ),
+            stream=True,
+        )
+        return response.aclose
+    except BaseException as exception:
+        return lambda: noop()
 
 
 @stream
