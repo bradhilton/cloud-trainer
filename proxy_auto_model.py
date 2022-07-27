@@ -1,6 +1,7 @@
 import autokeras as ak
 import httpx
 import inspect
+from IPython.display import clear_output
 from itertools import chain
 import pickle
 import sys
@@ -68,7 +69,10 @@ def _perform_request(
             if type == b"start":
                 pass
             elif type == b"stdout":
-                sys.stdout.write(content.decode("utf-8"))
+                decoded_content = content.decode("utf-8")
+                if decoded_content.startswith("\033[2J"):
+                    clear_output(wait=True)
+                sys.stdout.write(decoded_content)
             elif type == b"stderr":
                 sys.stderr.write(content.decode("utf-8"))
             elif type == b"result":
