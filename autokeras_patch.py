@@ -1,4 +1,3 @@
-from io import BytesIO
 import autokeras as ak
 from autokeras.graph import Graph
 from IPython.display import clear_output
