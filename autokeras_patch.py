@@ -1,3 +1,4 @@
+from io import BytesIO
 import autokeras as ak
 from autokeras.graph import Graph
 from IPython.display import clear_output
@@ -6,11 +7,13 @@ from keras.callbacks import Callback
 from keras_tuner import HyperParameters, Oracle
 from keras_tuner.engine import hyperparameters
 from keras_tuner.engine.trial import Trial
+import logging
 from proxy_auto_model import ProxyAutoModel
 from multiprocessing import Manager, Process
 from multiprocessing.managers import DictProxy
 import os
 import sys
+import tensorflow as tf
 from tensorflow.python.framework.errors_impl import NotFoundError
 import time
 from typing import Any, cast, Optional, TextIO, Union
@@ -150,13 +153,21 @@ def _AutoModel__fit_patch(
                 val_str = val_str[: col_width - 3] + "..."
             return val_str
 
+    tensorflow_logger = tf.get_logger()
+    tensorflow_log_level = tensorflow_logger.getEffectiveLevel()
+    tensorflow_logger.setLevel(logging.WARN)
+
     while True:
         try:
             time.sleep(0.5)
+
             try:
                 oracle.reload()
             except RuntimeError:
-                oracle = ak.AutoModel(*init_args, **init_kwargs).tuner.oracle
+                try:
+                    oracle = ak.AutoModel(*init_args, **init_kwargs).tuner.oracle
+                except RuntimeError:
+                    continue
             except NotFoundError:
                 pass
 
@@ -196,6 +207,7 @@ def _AutoModel__fit_patch(
                 end="\r",
             )
         except BaseException as exception:
+            tensorflow_logger.setLevel(tensorflow_log_level)
             chief_process.terminate()
             for process in tuner_processes:
                 process.terminate()
