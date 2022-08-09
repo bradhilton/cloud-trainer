@@ -53,7 +53,7 @@ def _AutoModel__new__patch(
 
 
 def _AutoModel__init__patch(self: ak.AutoModel, *args: Any, **kwargs: Any) -> None:
-    setattr(self, "_init_args_and_kwargs", (args, kwargs))
+    setattr(self, "_init_args_and_kwargs", (args, kwargs.copy()))
 
     compile_choices = [
         (key, kwargs.pop(key, None)) for key in ("optimizer", "learning_rate")
