@@ -12,6 +12,7 @@ aiohttp = "^3.8.1"
 nest-asyncio = "^1.5.5"
 tblib = "^1.7.0"
 httpx = "^0.23.0"
+scipy = "^1.9.0"
 
 [tool.poetry.dev-dependencies]
 black = "^22.6.0"

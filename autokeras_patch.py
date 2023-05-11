@@ -1,9 +1,11 @@
+from json import JSONDecodeError
 import autokeras as ak
 from autokeras.graph import Graph
 from IPython.display import clear_output
 import keras
 from keras.callbacks import Callback
 from keras_tuner import HyperParameters, Oracle
+from keras_tuner.distribute.utils import has_chief_oracle
 from keras_tuner.engine import hyperparameters
 from keras_tuner.engine.trial import Trial
 import logging
@@ -87,6 +89,7 @@ def _AutoModel__fit_patch(
     self: ak.AutoModel,
     *args: Any,
     num_tuners: int = 1,
+    dashboard_refresh_rate: float = 2,
     **kwargs: Any,
 ) -> Any:
     if num_tuners <= 1:
@@ -158,7 +161,7 @@ def _AutoModel__fit_patch(
 
     while True:
         try:
-            time.sleep(0.5)
+            time.sleep(1 / dashboard_refresh_rate)
 
             try:
                 oracle.reload()
@@ -169,6 +172,8 @@ def _AutoModel__fit_patch(
                     continue
             except NotFoundError:
                 pass
+            except BaseException as exception:
+                raise exception
 
             for key, trial in oracle.ongoing_trials.items():
                 tuner_state[int(key.split("tuner")[1])]["next_trial"] = (
@@ -276,8 +281,11 @@ def _tuner_process(
     os.environ["CUDA_VISIBLE_DEVICES"] = str(tuner_id)
     sys.stdout = _get_writeable_file(f"logs/stdout/tuner{tuner_id}.txt")
     sys.stderr = _get_writeable_file(f"logs/stderr/tuner{tuner_id}.txt")
+    while not has_chief_oracle():
+        print("\nWaiting for chief oracle...")
     print("\nStarting tuner...")
-    ak.AutoModel(*init_args, **init_kwargs).fit(
+    model = ak.AutoModel(*init_args, **init_kwargs)
+    model.fit(
         *fit_args,
         callbacks=fit_kwargs.pop("callbacks", []) + [TunerCallback()],
         **fit_kwargs,

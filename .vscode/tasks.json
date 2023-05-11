@@ -1,0 +1,63 @@
+{
+    // See https://go.microsoft.com/fwlink/?LinkId=733558
+    // for the documentation about the tasks.json format
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "🤖 tuner0",
+            "type": "shell",
+            "command": "tail -f logs/stdout/tuner0.txt -n 100",
+            "isBackground": true,
+            "presentation": {
+                "panel": "dedicated",
+                "showReuseMessage": false,
+                "clear": true
+            },
+            "runOptions": {
+                "runOn": "folderOpen"
+            }
+        },
+        {
+            "label": "🤖 tuner1",
+            "type": "shell",
+            "command": "tail -f logs/stdout/tuner1.txt -n 100",
+            "isBackground": true,
+            "presentation": {
+                "panel": "dedicated",
+                "showReuseMessage": false,
+                "clear": true
+            },
+            "runOptions": {
+                "runOn": "folderOpen"
+            }
+        },
+        {
+            "label": "🤖 tuner2",
+            "type": "shell",
+            "command": "tail -f logs/stdout/tuner2.txt -n 100",
+            "isBackground": true,
+            "presentation": {
+                "panel": "dedicated",
+                "showReuseMessage": false,
+                "clear": true
+            },
+            "runOptions": {
+                "runOn": "folderOpen"
+            }
+        },
+        {
+            "label": "🤖 tuner3",
+            "type": "shell",
+            "command": "tail -f logs/stdout/tuner3.txt -n 100",
+            "isBackground": true,
+            "presentation": {
+                "panel": "dedicated",
+                "showReuseMessage": false,
+                "clear": true
+            },
+            "runOptions": {
+                "runOn": "folderOpen"
+            }
+        }
+    ]
+}
